@@ -228,6 +228,18 @@ void AudioStreamPlaybackSample::mix(AudioFrame *p_buffer, float p_rate_scale, in
 		return;
 	}
 
+	float sanityCheck = 0.0f;
+	for (int sci = 0; sci < p_frames; sci++) {
+		sanityCheck += (p_buffer[sci].l + p_buffer[sci].r);	
+	}
+	if (sanityCheck != sanityCheck) {
+		// jjmontes> This is the sanity check that is triggered (maybe others too)
+		//print_error(String("NANs AudioStreamPlaybackSample Precheck (Received Target Buffer) (Clearing)")); //.format(varray(bus->name, j)));
+		for (int sci = 0; sci < p_frames; sci++) {
+			p_buffer[sci] = AudioFrame(0, 0);
+		}
+	}	
+
 	int len = base->data_bytes;
 	switch (base->format) {
 		case AudioStreamSample::FORMAT_8_BITS: len /= 1; break;
@@ -395,6 +407,19 @@ void AudioStreamPlaybackSample::mix(AudioFrame *p_buffer, float p_rate_scale, in
 			p_buffer[i] = AudioFrame(0, 0);
 		}
 	}
+
+
+	sanityCheck = 0.0f;
+	for (int i = 0; i < p_frames; i++) {
+		sanityCheck += (p_buffer[i].l + p_buffer[i].r);	
+	}
+	if (sanityCheck != sanityCheck) {
+		//print_error(String("NANs AudioStreamPlaybackSample (Target Buffer) (Clearing)")); //.format(varray(bus->name, j)));
+		for (int i = 0; i < p_frames; i++) {
+			p_buffer[i] = AudioFrame(0, 0);
+		}
+	}		
+
 }
 
 AudioStreamPlaybackSample::AudioStreamPlaybackSample() {

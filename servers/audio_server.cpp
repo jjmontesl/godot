@@ -364,6 +364,29 @@ void AudioServer::_mix_step() {
 				if (!bus->effects[j].enabled)
 					continue;
 
+				// Check if any of the processed effect samples are NaN, and if so skip the effect.
+				// See: https://github.com/godotengine/godot/issues/28110
+				float sanityCheck = 0.0f;
+				for (int k = 0; k < bus->channels.size(); k++) {
+					const AudioFrame *buf = bus->channels.write[k].buffer.ptr();
+					for (uint32_t jj = 0; jj < buffer_size; jj++) {
+						sanityCheck += (buf[jj].l + buf[jj].r);	
+					}
+				}
+				if (sanityCheck != sanityCheck) {
+					//print_error(String("NANs Effect Bus: {0} Effect: {1} (Clearing)").format(varray(bus->name, j)));
+					//SWAP(bus->channels.write[k].buffer, temp_buffer.write[k]);
+
+					for (int k = 0; k < bus->channels.size(); k++) {
+						AudioFrame *buf = bus->channels.write[k].buffer.ptrw();
+						for (uint32_t jj = 0; jj < buffer_size; jj++) {
+							buf[jj] = AudioFrame(0, 0);
+						}
+					}
+
+					continue;
+				}					
+
 #ifdef DEBUG_ENABLED
 				uint64_t ticks = OS::get_singleton()->get_ticks_usec();
 #endif
@@ -382,6 +405,21 @@ void AudioServer::_mix_step() {
 						continue;
 					SWAP(bus->channels.write[k].buffer, temp_buffer.write[k]);
 				}
+
+				/*
+				// Check if any of the processed effect samples are NaN, and if so ignore the processed buffer
+				// See: https://github.com/godotengine/godot/issues/28110
+				for (int k = 0; k < bus->channels.size(); k++) {
+					float sanityCheck = 0.0f;
+					const AudioFrame *buf = bus->channels.write[k].buffer.ptr();
+					for (uint32_t jj = 0; jj < buffer_size; jj++) {
+						sanityCheck += (buf[jj].l + buf[jj].r);	
+					}
+					if (sanityCheck != sanityCheck) {
+						SWAP(bus->channels.write[k].buffer, temp_buffer.write[k]);
+					}					
+				}
+				*/
 
 #ifdef DEBUG_ENABLED
 				bus->effects.write[j].prof_time += OS::get_singleton()->get_ticks_usec() - ticks;
@@ -427,7 +465,10 @@ void AudioServer::_mix_step() {
 			}
 
 			//apply volume and compute peak
+			float sanityCheck = 0.0f;
 			for (uint32_t j = 0; j < buffer_size; j++) {
+
+				sanityCheck += (buf[j].l + buf[j].r);	
 
 				buf[j] *= volume;
 
@@ -441,7 +482,21 @@ void AudioServer::_mix_step() {
 				}
 			}
 
+			// Check if any of the processed effect samples are NaN, and if so ignore the bus
+			
 			bus->channels.write[k].peak_volume = AudioFrame(Math::linear2db(peak.l + 0.0000000001), Math::linear2db(peak.r + 0.0000000001));
+
+			if (sanityCheck != sanityCheck) {
+				//SWAP(bus->channels.write[k].buffer, temp_buffer.write[k]);
+				//print_error(String("NANs Presend: {0} (Clearing, faking peak)").format(varray(bus->name)));
+				//continue;
+				for (uint32_t j = 0; j < buffer_size; j++) {
+					buf[j] = AudioFrame(0, 0);
+				}
+				//peak = AudioFrame(0, 0);
+				peak = AudioFrame(0.5f, 0.5f);
+			}
+
 
 			if (!bus->channels[k].used) {
 				//see if any audio is contained, because channel was not used
@@ -454,6 +509,8 @@ void AudioServer::_mix_step() {
 				}
 			}
 
+
+
 			if (send) {
 				//if not master bus, send
 				AudioFrame *target_buf = thread_get_channel_mix_buffer(send->index_cache, k);
@@ -462,7 +519,22 @@ void AudioServer::_mix_step() {
 					target_buf[j] += buf[j];
 				}
 			}
+
+			// Check if any of the processed effect samples are NaN, and report
+			/*
+			float sanityCheck = 0.0f;
+			const AudioFrame *buf = bus->channels.write[k].buffer.ptr();
+			for (uint32_t jj = 0; jj < buffer_size; jj++) {
+				sanityCheck += (target_buf[jj].l + target_buf[jj].r);	
+			}
+			if (sanityCheck != sanityCheck) {
+				//SWAP(bus->channels.write[k].buffer, temp_buffer.write[k]);
+				print_error(String("NAN Final Bus: {0} (Cleaning)").format(varray(bus->name)));
+				//continue;
+			}	
+			*/
 		}
+
 	}
 
 	mix_frames += buffer_size;
