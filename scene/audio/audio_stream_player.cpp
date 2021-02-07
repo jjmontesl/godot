@@ -59,10 +59,36 @@ void AudioStreamPlayer::_mix_to_bus(const AudioFrame *p_frames, int p_amount) {
 	for (int c = 0; c < 4; c++) {
 		if (!targets[c])
 			break;
+		float sanityCheckSource = 0.0f;
+		for (int i = 0; i < p_amount; i++) {
+			sanityCheckSource += (p_frames[i].l + p_frames[i].r);	
+		}
+		if (sanityCheckSource != sanityCheckSource) {
+			//print_error(String("NANs AudioStreamPlayer Source {0}").format(varray(get_path())));
+			break;
+		}
 		for (int i = 0; i < p_amount; i++) {
 			targets[c][i] += p_frames[i];
 		}
+		float sanityCheckTarget = 0.0f;
+		for (int i = 0; i < p_amount; i++) {
+			sanityCheckTarget += (p_frames[i].l + p_frames[i].r);	
+		}
+		if (sanityCheckTarget != sanityCheckTarget) {
+			//print_error(String("NANs AudioStreamPlayer Target {0}").format(varray(get_path())));
+		}
 	}
+
+				/*
+				// Check if any of the processed effect samples are NaN, and if so ignore the processed buffer
+				// See: https://github.com/godotengine/godot/issues/28110
+				for (int k = 0; k < bus->channels.size(); k++) {
+					const AudioFrame *buf = bus->channels.write[k].buffer.ptr();
+					for (uint32_t jj = 0; jj < buffer_size; jj++) {
+					}
+					
+				}
+				*/
 }
 
 void AudioStreamPlayer::_mix_internal(bool p_fadeout) {
@@ -71,10 +97,29 @@ void AudioStreamPlayer::_mix_internal(bool p_fadeout) {
 	AudioFrame *buffer = mix_buffer.ptrw();
 	int buffer_size = mix_buffer.size();
 
+	if (buffer_size == 0) {
+		//print_error(String("AudioStreamPlayer::_mix_internal buffer_size is 0: {0}").format(varray(get_path()))); //.format(varray(bus->name, j)));
+	}
+
 	if (p_fadeout) {
 		// Short fadeout ramp
 		buffer_size = MIN(buffer_size, 128);
 	}
+
+
+	float sanityCheck = 0.0f;
+	AudioFrame *scbuffer = mix_buffer.ptrw();
+	int scbuffer_size = mix_buffer.size();
+	for (int sci = 0; sci < scbuffer_size; sci++) {
+		sanityCheck += (scbuffer[sci].l + scbuffer[sci].r);	
+	}
+	if (sanityCheck != sanityCheck) {
+		// jjmontes> This is the sanity check that is triggered (maybe others too)
+		//print_error(String("AudioStreamPlayer::_mix_internal NaNs (mix_buffer, before stream mix) (Clearing): {0}").format(varray(get_path()))); //.format(varray(bus->name, j)));
+		for (int sci = 0; sci < scbuffer_size; sci++) {
+			scbuffer[sci] = AudioFrame(0, 0);
+		}
+	}	
 
 	stream_playback->mix(buffer, pitch_scale, buffer_size);
 
@@ -91,15 +136,64 @@ void AudioStreamPlayer::_mix_internal(bool p_fadeout) {
 	//set volume for next mix
 	mix_volume_db = target_volume;
 
+	sanityCheck = 0.0f;
+	scbuffer = mix_buffer.ptrw();
+	scbuffer_size = mix_buffer.size();
+	for (int sci = 0; sci < buffer_size; sci++) {
+		sanityCheck += (buffer[sci].l + buffer[sci].r);	
+	}
+	if (sanityCheck != sanityCheck) {
+		// jjmontes> This is the sanity check that is triggered (maybe others too)
+		//print_error(String("AudioStreamPlayer::_mix_internal NaNs (mix_buffer, before _mix_to_bus) (Clearing): {0}").format(varray(get_path()))); //.format(varray(bus->name, j)));
+		for (int sci = 0; sci < buffer_size; sci++) {
+			buffer[sci] = AudioFrame(0, 0);
+		}
+	}
+
 	_mix_to_bus(buffer, buffer_size);
 }
 
 void AudioStreamPlayer::_mix_audio() {
 
+	float sanityCheck = 0.0f;
+	const AudioFrame *scbuffer = mix_buffer.ptr();
+	int scbuffer_size = mix_buffer.size();
+	/*
+	for (int sci = 0; sci < scbuffer_size; sci++) {
+		sanityCheck += (scbuffer[sci].l + scbuffer[sci].r);	
+	}
+	if (sanityCheck != sanityCheck) {
+		print_error(String("NANs AudioStreamPlayer _mix_audio (mix_buffer) {0}").format(varray(get_path()))); //.format(varray(bus->name, j)));
+	}
+	*/
+
+
 	if (use_fadeout) {
+
+		sanityCheck = 0.0f;
+		scbuffer = fadeout_buffer.ptr();
+		scbuffer_size = fadeout_buffer.size();
+		for (int sci = 0; sci < scbuffer_size; sci++) {
+			sanityCheck += (scbuffer[sci].l + scbuffer[sci].r);	
+		}
+		if (sanityCheck != sanityCheck) {
+			//print_error(String("AudioStreamPlayer::_mix_audio NANs (fadeout_buffer)")); //.format(varray(bus->name, j)));
+		}
+
 		_mix_to_bus(fadeout_buffer.ptr(), fadeout_buffer.size());
 		use_fadeout = false;
+
+		sanityCheck = 0.0f;
+		scbuffer = fadeout_buffer.ptr();
+		scbuffer_size = fadeout_buffer.size();
+		for (int sci = 0; sci < scbuffer_size; sci++) {
+			sanityCheck += (scbuffer[sci].l + scbuffer[sci].r);	
+		}
+		if (sanityCheck != sanityCheck) {
+			//print_error(String("AudioStreamPlayer::_mix_audio NANs (fadeout_buffer) AFTER")); //.format(varray(bus->name, j)));
+		}
 	}
+
 
 	if (!stream_playback.is_valid() || !active ||
 			(stream_paused && !stream_paused_fade)) {
@@ -108,23 +202,86 @@ void AudioStreamPlayer::_mix_audio() {
 
 	if (stream_paused) {
 		if (stream_paused_fade) {
+
+			sanityCheck = 0.0f;
+			scbuffer = mix_buffer.ptr();
+			scbuffer_size = mix_buffer.size();
+			for (int sci = 0; sci < scbuffer_size; sci++) {
+				sanityCheck += (scbuffer[sci].l + scbuffer[sci].r);	
+			}
+			if (sanityCheck != sanityCheck) {
+				//print_error(String("AudioStreamPlayer::_mix_audio NANs (mix_buffer, stream_paused+stream_paused_fade) {0}").format(varray(get_path()))); //.format(varray(bus->name, j)));
+			}
+
 			_mix_internal(true);
+
+			sanityCheck = 0.0f;
+			scbuffer = mix_buffer.ptr();
+			scbuffer_size = mix_buffer.size();
+			for (int sci = 0; sci < scbuffer_size; sci++) {
+				sanityCheck += (scbuffer[sci].l + scbuffer[sci].r);	
+			}
+			if (sanityCheck != sanityCheck) {
+				//print_error(String("AudioStreamPlayer::_mix_audio NANs (mix_buffer, stream_paused+stream_paused_fade after) {0}").format(varray(get_path()))); //.format(varray(bus->name, j)));
+			}
+
 			stream_paused_fade = false;
 		}
 		return;
 	}
 
 	if (setstop) {
+
+		sanityCheck = 0.0f;
+		scbuffer = mix_buffer.ptr();
+		scbuffer_size = mix_buffer.size();
+		for (int sci = 0; sci < scbuffer_size; sci++) {
+			sanityCheck += (scbuffer[sci].l + scbuffer[sci].r);	
+		}
+		if (sanityCheck != sanityCheck) {
+			//print_error(String("AudioStreamPlayer::_mix_audio NANs (mix_buffer, setstop) {0}").format(varray(get_path()))); //.format(varray(bus->name, j)));
+		}
+
 		_mix_internal(true);
 		stream_playback->stop();
 		setstop = false;
+
+		sanityCheck = 0.0f;
+		scbuffer = mix_buffer.ptr();
+		scbuffer_size = mix_buffer.size();
+		for (int sci = 0; sci < scbuffer_size; sci++) {
+			sanityCheck += (scbuffer[sci].l + scbuffer[sci].r);	
+		}
+		if (sanityCheck != sanityCheck) {
+			//print_error(String("AudioStreamPlayer::_mix_audio NANs (mix_buffer, setstop after) {0}").format(varray(get_path()))); //.format(varray(bus->name, j)));
+		}
 	}
 
 	if (setseek >= 0.0 && !stop_has_priority) {
 		if (stream_playback->is_playing()) {
 
+			sanityCheck = 0.0f;
+			scbuffer = mix_buffer.ptr();
+			scbuffer_size = mix_buffer.size();
+			for (int sci = 0; sci < scbuffer_size; sci++) {
+				sanityCheck += (scbuffer[sci].l + scbuffer[sci].r);	
+			}
+			if (sanityCheck != sanityCheck) {
+				//print_error(String("AudioStreamPlayer::_mix_audio NANs (mix_buffer, setseek + !stop_has_priority + stream_playback->is_playing) {0}").format(varray(get_path()))); //.format(varray(bus->name, j)));
+			}
+
 			//fade out to avoid pops
 			_mix_internal(true);
+
+			sanityCheck = 0.0f;
+			scbuffer = mix_buffer.ptr();
+			scbuffer_size = mix_buffer.size();
+			for (int sci = 0; sci < scbuffer_size; sci++) {
+				sanityCheck += (scbuffer[sci].l + scbuffer[sci].r);	
+			}
+			if (sanityCheck != sanityCheck) {
+				//print_error(String("AudioStreamPlayer::_mix_audio NANs (mix_buffer, setseek + !stop_has_priority + stream_playback->is_playing after) {0}").format(varray(get_path()))); //.format(varray(bus->name, j)));
+			}
 		}
 
 		stream_playback->start(setseek);
@@ -133,6 +290,16 @@ void AudioStreamPlayer::_mix_audio() {
 	}
 
 	stop_has_priority = false;
+
+	sanityCheck = 0.0f;
+	scbuffer = mix_buffer.ptr();
+	scbuffer_size = mix_buffer.size();
+	for (int sci = 0; sci < scbuffer_size; sci++) {
+		sanityCheck += (scbuffer[sci].l + scbuffer[sci].r);	
+	}
+	if (sanityCheck != sanityCheck) {
+		//print_error(String("AudioStreamPlayer::_mix_audio NANs (mix_buffer, before final call to mix_internal) {0}").format(varray(get_path()))); //.format(varray(bus->name, j)));
+	}
 
 	_mix_internal(false);
 }
@@ -184,6 +351,19 @@ void AudioStreamPlayer::set_stream(Ref<AudioStream> p_stream) {
 		AudioFrame *buffer = fadeout_buffer.ptrw();
 		int buffer_size = fadeout_buffer.size();
 
+		
+		float sanityCheck = 0.0f;
+		for (int sci = 0; sci < buffer_size; sci++) {
+			sanityCheck += (buffer[sci].l + buffer[sci].r);	
+		}
+		if (sanityCheck != sanityCheck) {
+			// jjmontes> This is the sanity check that is triggered (maybe others too)
+			//print_error(String("NANs AudioStreamPlayer SetStream Premix (Fadeout Buffer) (Clearing)")); //.format(varray(bus->name, j)));
+			for (int sci = 0; sci < buffer_size; sci++) {
+				buffer[sci] = AudioFrame(0, 0);
+			}
+		}
+
 		stream_playback->mix(buffer, pitch_scale, buffer_size);
 
 		//multiply volume interpolating to avoid clicks if this changes
@@ -197,6 +377,18 @@ void AudioStreamPlayer::set_stream(Ref<AudioStream> p_stream) {
 		}
 
 		use_fadeout = true;
+
+		sanityCheck = 0.0f;
+		for (int sci = 0; sci < buffer_size; sci++) {
+			sanityCheck += (buffer[sci].l + buffer[sci].r);	
+		}
+		if (sanityCheck != sanityCheck) {
+			// jjmontes> This is the sanity check that is triggered (maybe others too)
+			//print_error(String("NANs AudioStreamPlayer SetStream PostMix (Fadeout Buffer) (Clearing)")); //.format(varray(bus->name, j)));
+			for (int sci = 0; sci < buffer_size; sci++) {
+				buffer[sci] = AudioFrame(0, 0);
+			}
+		}
 	}
 
 	mix_buffer.resize(AudioServer::get_singleton()->thread_get_mix_buffer_size());

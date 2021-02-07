@@ -50,12 +50,44 @@ void AudioStreamPlayer2D::_mix_audio() {
 	AudioFrame *buffer = mix_buffer.ptrw();
 	int buffer_size = mix_buffer.size();
 
+	if (buffer_size == 0) {
+		//print_error(String("AudioStreamPlayer2D::_mix_audio buffer_size is 0: {0}").format(varray(get_path()))); //.format(varray(bus->name, j)));
+	}
+	
+
+	float sanityCheck = 0.0f;
+	AudioFrame *scbuffer = buffer;
+	int scbuffer_size = buffer_size;
+	for (int sci = 0; sci < scbuffer_size; sci++) {
+		sanityCheck += (scbuffer[sci].l + scbuffer[sci].r);	
+	}
+	if (sanityCheck != sanityCheck) {
+		//print_error(String("AudioStreamPlayer2D::_mix_audio NaNs (mix_buffer, before stream mix) (Clearing): {0}").format(varray(get_path()))); //.format(varray(bus->name, j)));
+		for (int sci = 0; sci < scbuffer_size; sci++) {
+			scbuffer[sci] = AudioFrame(0, 0);
+		}
+	}		
+
 	if (stream_paused_fade_out) {
 		// Short fadeout ramp
 		buffer_size = MIN(buffer_size, 128);
+		//stream_paused_fade_out = false;
 	}
 
 	stream_playback->mix(buffer, pitch_scale, buffer_size);
+	
+	sanityCheck = 0.0f;
+	scbuffer = buffer;
+	scbuffer_size = mix_buffer.size();
+	for (int sci = 0; sci < scbuffer_size; sci++) {
+		sanityCheck += (scbuffer[sci].l + scbuffer[sci].r);	
+	}
+	if (sanityCheck != sanityCheck) {
+		//print_error(String("AudioStreamPlayer2D::_mix_audio NaNs (buffer, after stream mix) (Clearing): {0}").format(varray(get_path()))); //.format(varray(bus->name, j)));
+		for (int sci = 0; sci < scbuffer_size; sci++) {
+			scbuffer[sci] = AudioFrame(0, 0);
+		}
+	}
 
 	//write all outputs
 	for (int i = 0; i < output_count; i++) {
@@ -87,6 +119,13 @@ void AudioStreamPlayer2D::_mix_audio() {
 		AudioFrame target_volume = stream_paused_fade_out ? AudioFrame(0.f, 0.f) : current.vol;
 		AudioFrame vol_prev = stream_paused_fade_in ? AudioFrame(0.f, 0.f) : prev_outputs[i].vol;
 		AudioFrame vol_inc = (target_volume - vol_prev) / float(buffer_size);
+		if (vol_inc.l != vol_inc.l || vol_inc.r != vol_inc.r) {
+			//print_error(String("AudioStreamPlayer2D::_mix_audio Volume NaN (output volume): {0}").format(varray(get_path()))); //.format(varray(bus->name, j)));
+			vol_inc = AudioFrame(0, 0);
+			vol_prev = AudioFrame(0, 0);
+			target_volume = AudioFrame(0, 0);
+			current.vol = AudioFrame(0, 0);
+		}
 		AudioFrame vol = vol_prev;
 
 		int cc = AudioServer::get_singleton()->get_channel_count();
@@ -96,12 +135,40 @@ void AudioStreamPlayer2D::_mix_audio() {
 				continue; //may have been removed
 
 			AudioFrame *target = AudioServer::get_singleton()->thread_get_channel_mix_buffer(current.bus_index, 0);
+			int targetSize = AudioServer::get_singleton()->thread_get_mix_buffer_size();
+
+			sanityCheck = 0.0f;
+			scbuffer = target;
+			scbuffer_size = targetSize;
+			for (int sci = 0; sci < scbuffer_size; sci++) {
+				sanityCheck += (scbuffer[sci].l + scbuffer[sci].r);	
+			}
+			if (sanityCheck != sanityCheck) {
+				//print_error(String("AudioStreamPlayer2D::_mix_audio NaNs (target, before buffer mix) (Clearing): {0}").format(varray(get_path()))); //.format(varray(bus->name, j)));
+				for (int sci = 0; sci < scbuffer_size; sci++) {
+					scbuffer[sci] = AudioFrame(0, 0);
+				}
+			}
+
+			sanityCheck = 0.0f;
+			scbuffer = buffer;
+			scbuffer_size = mix_buffer.size();
+			for (int sci = 0; sci < scbuffer_size; sci++) {
+				sanityCheck += (scbuffer[sci].l + scbuffer[sci].r);	
+			}
+			if (sanityCheck != sanityCheck) {
+				//print_error(String("AudioStreamPlayer2D::_mix_audio NaNs (buffer, before buffer mix) (Clearing): {0}").format(varray(get_path()))); //.format(varray(bus->name, j)));
+				for (int sci = 0; sci < scbuffer_size; sci++) {
+					scbuffer[sci] = AudioFrame(0, 0);
+				}
+			}
 
 			for (int j = 0; j < buffer_size; j++) {
-
 				target[j] += buffer[j] * vol;
 				vol += vol_inc;
 			}
+
+
 
 		} else {
 			AudioFrame *targets[4];
@@ -114,6 +181,19 @@ void AudioStreamPlayer2D::_mix_audio() {
 				}
 
 				targets[k] = AudioServer::get_singleton()->thread_get_channel_mix_buffer(current.bus_index, k);
+
+				sanityCheck = 0.0f;
+				scbuffer = targets[k];
+				scbuffer_size = AudioServer::get_singleton()->thread_get_mix_buffer_size();
+				for (int sci = 0; sci < scbuffer_size; sci++) {
+					sanityCheck += (scbuffer[sci].l + scbuffer[sci].r);	
+				}
+				if (sanityCheck != sanityCheck) {
+					//print_error(String("AudioStreamPlayer2D::_mix_audio NaNs (multichan channel target, before buffer mix) (Clearing): {0}").format(varray(get_path()))); //.format(varray(bus->name, j)));
+					for (int sci = 0; sci < scbuffer_size; sci++) {
+						scbuffer[sci] = AudioFrame(0, 0);
+					}
+				}
 			}
 
 			if (!valid)
@@ -232,11 +312,18 @@ void AudioStreamPlayer2D::_notification(int p_what) {
 					Vector2 point_in_screen = to_screen.xform(global_pos);
 
 					float pan = CLAMP(point_in_screen.x / screen_size.width, 0.0, 1.0);
+					
+					// Silence if NaNs would poison the audio system (if the Transform had NaN values).
+					if (!isfinite(pan) || !isfinite(multiplier)) {
+						pan = 0.5f;
+						multiplier = 0.0f;
+					}
 
 					float l = 1.0 - pan;
 					float r = pan;
 
 					outputs[new_output_count].vol = AudioFrame(l, r) * multiplier;
+					
 					outputs[new_output_count].bus_index = bus_index;
 					outputs[new_output_count].viewport = vp; //keep pointer only for reference
 					new_output_count++;

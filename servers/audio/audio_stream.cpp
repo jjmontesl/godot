@@ -49,6 +49,18 @@ void AudioStreamPlaybackResampled::_begin_resample() {
 
 void AudioStreamPlaybackResampled::mix(AudioFrame *p_buffer, float p_rate_scale, int p_frames) {
 
+	float sanityCheck = 0.0f;
+	for (int sci = 0; sci < p_frames; sci++) {
+		sanityCheck += (p_buffer[sci].l + p_buffer[sci].r);	
+	}
+	if (sanityCheck != sanityCheck) {
+		// jjmontes> This is the sanity check that is triggered (ma(p_buffer, before mixing stream into it)
+		//print_error(String("AudioStreamPlaybackResampled::mix NaNs (p_buffer, before mixing stream into it) (Clearing)")); //.format(varray(bus->name, j)));
+		for (int sci = 0; sci < p_frames; sci++) {
+			p_buffer[sci] = AudioFrame(0, 0);
+		}
+	}
+
 	float target_rate = AudioServer::get_singleton()->get_mix_rate();
 	float global_rate_scale = AudioServer::get_singleton()->get_global_rate_scale();
 
