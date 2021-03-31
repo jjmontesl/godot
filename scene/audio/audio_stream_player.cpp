@@ -65,6 +65,21 @@ void AudioStreamPlayer::_mix_to_bus(const AudioFrame *p_frames, int p_amount) {
 	}
 }
 
+/*
+uint64_t mix_time = AudioDriver::get_singleton()->get_mix_time_usec();
+	uint64_t scheduled_time = get_scheduled_time_usec();
+	uint64_t scheduled_stop_time = get_scheduled_stop_time_usec();
+	bool is_scheduled_stop = mix_time >= scheduled_stop_time;
+	if (is_scheduled_stop) {
+		set_scheduled_stop_time_usec(0);
+		stop();
+	}
+	bool is_scheduled = mix_time < scheduled_time;
+	if (!base->data ||
+			!active ||
+			is_scheduled) {
+*/
+
 void AudioStreamPlayer::_mix_internal(bool p_fadeout) {
 	//get data
 	AudioFrame *buffer = mix_buffer.ptrw();

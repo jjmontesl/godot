@@ -223,18 +223,9 @@ void AudioStreamPlaybackSample::do_resample(const Depth *p_src, AudioFrame *p_ds
 }
 
 void AudioStreamPlaybackSample::mix(AudioFrame *p_buffer, float p_rate_scale, int p_frames) {
-	uint64_t mix_time = AudioDriver::get_singleton()->get_mix_time_usec();
-	uint64_t scheduled_time = get_scheduled_time_usec();
-	uint64_t scheduled_stop_time = get_scheduled_stop_time_usec();
-	bool is_scheduled_stop = mix_time >= scheduled_stop_time;
-	if (is_scheduled_stop) {
-		set_scheduled_stop_time_usec(0);
-		stop();
-	}
-	bool is_scheduled = mix_time < scheduled_time;
+
 	if (!base->data ||
-			!active ||
-			is_scheduled) {
+			!active) {
 		for (int i = 0; i < p_frames; i++) {
 			p_buffer[i] = AudioFrame(0, 0);
 		}
@@ -269,6 +260,7 @@ void AudioStreamPlaybackSample::mix(AudioFrame *p_buffer, float p_rate_scale, in
 
 	int32_t todo = p_frames;
 
+
 	if (base->loop_mode == AudioStreamSample::LOOP_BACKWARD) {
 		sign = -1;
 	}
@@ -297,6 +289,53 @@ void AudioStreamPlaybackSample::mix(AudioFrame *p_buffer, float p_rate_scale, in
 			ima_adpcm[0].loop_pos = loop_begin_fp >> MIX_FRAC_BITS;
 			ima_adpcm[1].loop_pos = loop_begin_fp >> MIX_FRAC_BITS;
 			loop_format = AudioStreamSample::LOOP_FORWARD;
+		}
+	}
+
+
+	/*
+	mix_time = 0.0
+	scheduled_time = 0.01f   // 0.015 buffer size!
+	silence_time_into_this_buffer = 0.01 
+	silence_frames_into_this_buffer = 0.01 * 44100 (mixrate) = 441
+	*/
+
+	/*
+	uint64_t mix_time = AudioDriver::get_singleton()->get_mix_time_usec();
+	uint64_t scheduled_stop_time = get_scheduled_stop_time_usec();
+	bool is_scheduled_stop = mix_time >= scheduled_stop_time;
+	//bool is_scheduled = mix_time < scheduled_time;
+	if (is_scheduled_stop) {
+		set_scheduled_stop_time_usec(0);
+		stop();
+	}
+
+	lock();
+	uint64_t last_mix_time = _last_mix_time;
+	uint64_t last_mix_frames = _last_mix_frames;
+	unlock();
+	double total = (OS::get_singleton()->get_ticks_usec() - last_mix_time) / 1000000.0;
+	double mix_buffer = last_mix_frames / (double)get_mix_rate();
+	return mix_buffer - total;
+	
+	//dst_buff += silence_frames_into_this_buffer;
+	*/
+
+	uint64_t scheduled_time = get_scheduled_time_usec();
+	uint64_t buffer_start_time = AudioServer::get_singleton()->get_mix_time_usec() + ((p_frames * 1000000) / AudioServer::get_singleton()->get_mix_rate());
+	uint64_t silence_time_into_this_buffer = scheduled_time - buffer_start_time;
+
+	silence_time_into_this_buffer = (silence_time_into_this_buffer < todo) ? silence_time_into_this_buffer : todo;
+	uint64_t silence_frames_into_this_buffer = (silence_time_into_this_buffer * AudioServer::get_singleton()->get_mix_rate()) / 1000000;
+
+	if (silence_frames_into_this_buffer) {
+		//bit was missing from mix
+		todo -= silence_frames_into_this_buffer;
+		dst_buff += silence_frames_into_this_buffer;
+
+		// fill with zero
+		for (int i = 0; i < silence_frames_into_this_buffer; i++) {
+			p_buffer[i] = AudioFrame(0, 0);
 		}
 	}
 
