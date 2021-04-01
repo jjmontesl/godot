@@ -322,21 +322,36 @@ void AudioStreamPlaybackSample::mix(AudioFrame *p_buffer, float p_rate_scale, in
 	*/
 
 	uint64_t scheduled_time = get_scheduled_time_usec();
-	uint64_t buffer_start_time = AudioServer::get_singleton()->get_mix_time_usec() + ((p_frames * 1000000) / AudioServer::get_singleton()->get_mix_rate());
-	uint64_t silence_time_into_this_buffer = scheduled_time - buffer_start_time;
+	uint64_t buffer_start_time = AudioServer::get_singleton()->get_last_mix_time() * 1000000 + ((p_frames * 1000000) / AudioServer::get_singleton()->get_mix_rate());
+	int64_t silence_time_into_this_buffer = scheduled_time - buffer_start_time;
 
-	silence_time_into_this_buffer = (silence_time_into_this_buffer < todo) ? silence_time_into_this_buffer : todo;
-	uint64_t silence_frames_into_this_buffer = (silence_time_into_this_buffer * AudioServer::get_singleton()->get_mix_rate()) / 1000000;
+	print_line("Mix:");
+	print_line("scheduled_time " + itos(scheduled_time));
+	print_line("buffer_start_time " + itos(buffer_start_time));
 
-	if (silence_frames_into_this_buffer) {
+	int64_t silence_frames_into_this_buffer = (silence_time_into_this_buffer * AudioServer::get_singleton()->get_mix_rate()) / 1000000;
+
+	silence_frames_into_this_buffer = (silence_frames_into_this_buffer < todo) ? silence_frames_into_this_buffer : todo;
+	if (silence_frames_into_this_buffer < 0) silence_frames_into_this_buffer = 0;
+
+	print_line("silence_time_into_this_buffer " + itos(silence_time_into_this_buffer));
+	print_line("silence_frames_into_this_buffer " + itos(silence_frames_into_this_buffer));
+
+	if (scheduled_time && silence_frames_into_this_buffer) {
+
 		//bit was missing from mix
 		todo -= silence_frames_into_this_buffer;
 		dst_buff += silence_frames_into_this_buffer;
 
 		// fill with zero
 		for (int i = 0; i < silence_frames_into_this_buffer; i++) {
-			p_buffer[i] = AudioFrame(0, 0);
+			p_buffer[i] = AudioFrame(0.0, 0.0);
 		}
+
+	}
+
+	if (scheduled_time && silence_frames_into_this_buffer < todo) {
+		set_scheduled_time_usec(0);
 	}
 
 	while (todo > 0) {
